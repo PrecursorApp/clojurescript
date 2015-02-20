@@ -553,6 +553,20 @@ should contain the source for the given namespace name."
           required-cljs
           inputs)))))
 
+(defn make-output-wrapper-preamble [{:keys [output-wrapper] :as opts}]
+  (when output-wrapper ";(function(){\n"))
+
+(defn make-output-wrapper-postamble [{:keys [output-wrapper] :as opts}]
+  (when output-wrapper "\n})();\n"))
+
+(declare path-relative-to)
+
+(defn make-source-map-link [{:keys [source-map output-to] :as opts}]
+  (when source-map
+    (if (= output-to :print)
+      (str "\n//# sourceMappingURL=" source-map)
+      (str "\n//# sourceMappingURL=" (path-relative-to (io/file output-to) {:url source-map})))))
+
 (defn preamble-from-paths [paths]
   (when-let [missing (seq (remove io/resource paths))]
     (ana/warning :preamble-missing @env/*compiler* {:missing (sort missing)}))
@@ -562,7 +576,12 @@ should contain the source for the given namespace name."
 (defn make-preamble [{:keys [target preamble hashbang]}]
   (str (when (and (= :nodejs target) (not (false? hashbang)))
          (str "#!" (or hashbang "/usr/bin/env node") "\n"))
-       (when preamble (preamble-from-paths preamble))))
+       (when preamble (preamble-from-paths preamble))
+       (make-output-wrapper-preamble opts)))
+
+(defn make-postamble [opts]
+  (str (make-output-wrapper-postamble opts)
+       (make-source-map-link opts)))
 
 (comment
   ;; add dependencies to literal js
@@ -1205,17 +1224,8 @@ should contain the source for the given namespace name."
               (slurp url)))]
     (str (string/join "\n" (map to-js-str sources)) "\n")))
 
-(defn add-wrapper [{:keys [output-wrapper] :as opts} js]
-  (if output-wrapper
-   (str ";(function(){\n" js "\n})();\n")
-   js))
-
-(defn add-source-map-link [{:keys [source-map output-to] :as opts} js]
-  (if source-map
-      (if (= output-to :print)
-        (str js "\n//# sourceMappingURL=" source-map)
-        (str js "\n//# sourceMappingURL=" (path-relative-to (io/file output-to) {:url source-map})))
-    js))
+(defn add-footer [opts js]
+  (str js (make-postamble opts)))
 
 (defn absolute-path? [path]
   (.isAbsolute (io/file path)))
@@ -1393,10 +1403,9 @@ should contain the source for the given namespace name."
                                  "Optimize sources"
                                  (apply optimize all-opts
                                    (remove foreign-source? js-sources)))
-                               (add-wrapper all-opts)
-                               (add-source-map-link all-opts)
                                (str fdeps-str)
                                (add-header all-opts)
+                               (add-footer all-opts)
                                (output-one-file all-opts)))))
                        (apply output-unoptimized all-opts js-sources))]
              ;; emit Node.js bootstrap script for :none & :whitespace optimizations
